@@ -36,6 +36,7 @@ class TrainConfig:
 
 @dataclass
 class DistillationConfig:
+    experiment_name: str = "cifar10_benchmark"
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     loss: LossConfig = field(default_factory=LossConfig)

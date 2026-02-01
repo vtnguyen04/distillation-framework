@@ -144,5 +144,6 @@ checkpoint_epoch_*/
 logs/
 data/
 outputs/
+experiments/
 *.safetensors
 *.bin

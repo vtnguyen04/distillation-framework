@@ -27,7 +27,24 @@ class Trainer:
         config: Dict[str, Any] = None,
         project_name: str = "flux-distill"
     ):
-        self.accelerator = Accelerator(log_with="tensorboard", project_dir="./logs") # Default to tensorboard
+        import datetime
+        import os
+
+        # Setup Experiment Directory
+        self.config = config or {}
+        # Handle config object or dict
+        exp_name = getattr(config, "experiment_name", None) if config else "default_exp"
+        if not exp_name and isinstance(config, dict):
+             exp_name = config.get("experiment_name", "default_exp")
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.output_dir = f"experiments/{exp_name}/{timestamp}"
+        self.checkpoint_dir = f"{self.output_dir}/checkpoints"
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+        # Initialize Accelerator with specific project dir
+        self.accelerator = Accelerator(log_with="tensorboard", project_dir=self.output_dir)
         self.device = self.accelerator.device
 
         # Prepare components
@@ -37,7 +54,6 @@ class Trainer:
             )
 
         self.loss_fn = loss_fn
-        self.config = config or {}
         self.teacher.eval()
 
         # MLOps Tracker
@@ -89,7 +105,7 @@ class Trainer:
         return avg_loss
 
     def fit(self, epochs: int):
-        logger.info(f"Starting training for {epochs} epochs")
+        logger.info(f"🚀 Starting experiment in: {self.output_dir}")
         for epoch in range(1, epochs + 1):
             avg_loss = self.train_epoch(epoch)
 
@@ -98,7 +114,9 @@ class Trainer:
                  pass
 
             if self.accelerator.is_local_main_process:
-                self.accelerator.save_state(f"checkpoint_epoch_{epoch}")
+                # Save to structured dir
+                save_path = f"{self.checkpoint_dir}/epoch_{epoch}"
+                self.accelerator.save_state(save_path)
 
         self.tracker.finish()
 
