@@ -19,6 +19,8 @@ dependencies = [
     "accelerate",
     "tqdm",
     "rich",  # For pretty logging
+    "torchvision",
+    "tensorboard",
 ]
 
 [project.optional-dependencies]

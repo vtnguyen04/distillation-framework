@@ -56,12 +56,73 @@ class MSEFeatureLoss(DistillationLoss):
 
         loss = 0.0
         # intermediate_maps should be { 'student_layer_name': student_feat, 'teacher_layer_name': teacher_feat }
-        # Ideally, we need a more structured mapping.
-        # For now, let's assume specific keys or passed directly.
-        # This is a simplification; robust mapping needed for production.
-
-        # Checking if specific keys (s_feat, t_feat) exist for simplicity in this MVP
         if 's_feat' in intermediate_maps and 't_feat' in intermediate_maps:
              loss += self.mse(intermediate_maps['s_feat'], intermediate_maps['t_feat'])
 
         return self.beta * loss
+
+class AttentionTransferLoss(DistillationLoss):
+    """
+    Attention Transfer Loss (Zagoruyko & Komodakis, 2017).
+    Forces the student's activation maps to match the teacher's attention maps.
+    """
+    def __init__(self, beta: float = 1000.0):
+        self.beta = beta
+
+    def at(self, x):
+        return F.normalize(x.pow(2).mean(1).view(x.size(0), -1))
+
+    def compute(
+        self,
+        student_out: Any,
+        teacher_out: Any,
+        target: Optional[torch.Tensor] = None,
+        intermediate_maps: Optional[Dict[str, Any]] = None
+    ) -> torch.Tensor:
+        if intermediate_maps is None:
+            return torch.tensor(0.0)
+
+        loss = 0.0
+        # Expecting lists of feature maps
+        if 'student_feats' in intermediate_maps and 'teacher_feats' in intermediate_maps:
+             s_feats = intermediate_maps['student_feats']
+             t_feats = intermediate_maps['teacher_feats']
+
+             for s, t in zip(s_feats, t_feats):
+                 # Resize if necessary
+                 if s.shape[2:] != t.shape[2:]:
+                     s = F.interpolate(s, t.shape[2:], mode='bilinear', align_corners=False)
+                 loss += (self.at(s) - self.at(t)).pow(2).mean()
+
+        return self.beta * loss
+
+class ContrastiveDistillationLoss(DistillationLoss):
+    """
+    Contrastive Representation Distillation (CRD).
+    Simplified InfoNCE version for representation alignment.
+    """
+    def __init__(self, temperature: float = 0.07, weight: float = 1.0):
+        self.temperature = temperature
+        self.weight = weight
+
+    def compute(
+        self,
+        student_out: Any,
+        teacher_out: Any,
+        target: Optional[torch.Tensor] = None,
+        intermediate_maps: Optional[Dict[str, Any]] = None
+    ) -> torch.Tensor:
+        """
+        Assumes student_out and teacher_out are feature vectors (e.g. before classifier).
+        """
+        # Normalize
+        s = F.normalize(student_out, dim=1)
+        t = F.normalize(teacher_out, dim=1)
+
+        # InfoNCE
+        # Positive pairs: (s_i, t_i)
+        logits = torch.matmul(s, t.T) / self.temperature
+        labels = torch.arange(s.size(0), device=s.device)
+
+        loss = F.cross_entropy(logits, labels)
+        return self.weight * loss
