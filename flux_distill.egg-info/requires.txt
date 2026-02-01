@@ -1,0 +1,13 @@
+torch>=2.0.0
+numpy
+hydra-core
+accelerate
+tqdm
+rich
+
+[dev]
+pytest
+pytest-cov
+ruff
+mypy
+black

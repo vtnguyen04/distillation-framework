@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flux-distill"
+version = "0.1.0"
+description = "A high-performance, modular AI distillation framework."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+  {name = "Your Name", email = "your.email@example.com"}
+]
+dependencies = [
+    "torch>=2.0.0",
+    "numpy",
+    "hydra-core",
+    "accelerate",
+    "tqdm",
+    "rich",  # For pretty logging
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "black"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.ruff]
+line-length = 120
+select = ["E", "F", "I", "W", "UP", "N", "B", "A", "C4", "PT", "SIM", "ARG", "ERA"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
