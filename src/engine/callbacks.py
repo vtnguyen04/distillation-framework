@@ -111,10 +111,12 @@ class EarlyStopping(Callback):
             improved = current_score > (self.best_score + self.min_delta)
 
         if improved:
+            logger.info(f"✅ EarlyStopping: Improved {self.monitor} from {self.best_score:.4f} to {current_score:.4f}")
             self.best_score = current_score
             self.wait = 0
         else:
             self.wait += 1
+            logger.info(f"⏳ EarlyStopping: No improvement in {self.monitor} (Best: {self.best_score:.4f} | Current: {current_score:.4f}). Wait: {self.wait}/{self.patience}")
             if self.wait >= self.patience:
                 self.stopped_epoch = epoch
                 trainer.should_stop = True

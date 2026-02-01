@@ -46,8 +46,8 @@ class CheckpointConfig:
 class EarlyStoppingConfig:
     enabled: bool = True
     monitor: str = "train_loss"
-    patience: int = 5
-    min_delta: float = 0.001
+    patience: int = 10
+    min_delta: float = 1e-4
 
 @dataclass
 class DistillationConfig:
