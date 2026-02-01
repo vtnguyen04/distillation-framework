@@ -42,35 +42,104 @@ def main(cfg: DistillationConfig):
     print(f"Running Benchmark with Batch Size: {cfg.data.batch_size}")
 
     # 1. Data
-    transform = transforms.Compose([
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
     ])
 
-    trainset = datasets.CIFAR10(root=cfg.data.data_root, train=True, download=True, transform=transform)
-    train_loader = DataLoaderFactory.create(
-        trainset,
-        batch_size=cfg.data.batch_size,
-        num_workers=cfg.data.num_workers
-    )
+    trainset = datasets.CIFAR10(root=cfg.data.data_root, train=True, download=True, transform=transform_train)
+    train_loader = DataLoaderFactory.create(trainset, batch_size=cfg.data.batch_size, num_workers=cfg.data.num_workers)
+
+    testset = datasets.CIFAR10(root=cfg.data.data_root, train=False, download=True, transform=transform_test)
+    test_loader = DataLoaderFactory.create(testset, batch_size=cfg.data.batch_size, num_workers=cfg.data.num_workers)
 
     # 2. Models
     # Teacher: Pretrained ResNet18
-    teacher = resnet18(pretrained=True)
-    teacher.fc = nn.Linear(512, 10) # Adapt for CIFAR10
+    print("Preparing Teacher Model...")
+    teacher = resnet18(weights='DEFAULT')
+    teacher.fc = nn.Linear(512, 10)
+
+    # Quick Fine-tune Teacher (1 Epoch) using standard CE Loss
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    teacher = teacher.to(device)
+    teacher.train()
+    optimizer_t = optim.SGD(teacher.parameters(), lr=0.01, momentum=0.9)
+    criterion_t = nn.CrossEntropyLoss()
+
+    print("🚀 Fine-tuning Teacher for 1 Epoch (to make it a valid teacher)...")
+    from tqdm import tqdm
+    for inputs, targets in tqdm(train_loader, desc="Teacher Fine-tune"):
+        inputs, targets = inputs.to(device), targets.to(device)
+        optimizer_t.zero_grad()
+        outputs = teacher(inputs)
+        loss = criterion_t(outputs, targets)
+        loss.backward()
+        optimizer_t.step()
+
+    # Validate Teacher
+    teacher.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for inputs, targets in test_loader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            outputs = teacher(inputs)
+            _, predicted = outputs.max(1)
+            total += targets.size(0)
+            correct += predicted.eq(targets).sum().item()
+    print(f"✅ Teacher Accuracy after fine-tuning: {100.*correct/total:.2f}%")
+
     teacher_wrapper = PyTorchModelWrapper(teacher)
 
-    # Student: Custom Small ResNet
-    student = StudentResNet()
+    # Student: ResNet9 (Simplified but deeper)
+    class ResNet9(nn.Module):
+        def __init__(self, in_channels=3, num_classes=10):
+            super().__init__()
+            self.conv1 = self.conv_block(in_channels, 64)
+            self.conv2 = self.conv_block(64, 128, pool=True)
+            self.res1 = nn.Sequential(self.conv_block(128, 128), self.conv_block(128, 128))
+            self.conv3 = self.conv_block(128, 256, pool=True)
+            self.conv4 = self.conv_block(256, 512, pool=True)
+            self.res2 = nn.Sequential(self.conv_block(512, 512), self.conv_block(512, 512))
+            self.classifier = nn.Sequential(
+                nn.MaxPool2d(4),
+                nn.Flatten(),
+                nn.Linear(512, num_classes)
+            )
+
+        def conv_block(self, in_channels, out_channels, pool=False):
+            layers = [nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+                      nn.BatchNorm2d(out_channels),
+                      nn.ReLU(inplace=True)]
+            if pool: layers.append(nn.MaxPool2d(2))
+            return nn.Sequential(*layers)
+
+        def forward(self, x):
+            out = self.conv1(x)
+            out = self.conv2(out)
+            out = self.res1(out) + out
+            out = self.conv3(out)
+            out = self.conv4(out)
+            out = self.res2(out) + out
+            return self.classifier(out)
+
+    student = ResNet9()
     student_wrapper = PyTorchModelWrapper(student)
 
     # 3. Loss & Opt
-    # Hybrid Loss: KL + Attention Transfer
     kl_loss = KLDivergenceLoss(temperature=cfg.loss.temperature, alpha=cfg.loss.alpha)
-    # Note: Attention Transfer requires feature maps, which our simple wrapper/model doesn't fully expose generically yet.
-    # For this benchmark, we'll stick to KL to verify high-performance loop.
+    optimizer = optim.SGD(student.parameters(), lr=0.1, momentum=0.9, weight_decay=5e-4) # Optimized LR for ResNet9
 
-    optimizer = optim.SGD(student.parameters(), lr=cfg.train.lr, momentum=cfg.train.momentum)
+    # Scheduler
+    scheduler = optim.lr_scheduler.OneCycleLR(
+        optimizer, max_lr=0.1, epochs=cfg.train.epochs, steps_per_epoch=len(train_loader)
+    )
 
     # 4. Trainer with MLOps
     trainer = Trainer(
@@ -79,6 +148,7 @@ def main(cfg: DistillationConfig):
         train_loader=train_loader,
         optimizer=optimizer,
         loss_fn=kl_loss,
+        scheduler=scheduler,  # Passed OneCycleLR
         config=cfg,
         project_name="cifar10-benchmark"
     )
@@ -87,13 +157,6 @@ def main(cfg: DistillationConfig):
 
     # 5. Evaluation
     print("\nStarting Evaluation...")
-    testset = datasets.CIFAR10(root=cfg.data.data_root, train=False, download=True, transform=transform)
-    test_loader = DataLoaderFactory.create(
-        testset,
-        batch_size=cfg.data.batch_size,
-        num_workers=cfg.data.num_workers
-    )
-
     from src.engine.evaluator import Evaluator
     evaluator = Evaluator(
         model=student_wrapper,
@@ -102,7 +165,7 @@ def main(cfg: DistillationConfig):
     )
 
     metrics = evaluator.evaluate()
-    print(f"Final Test Metrics: {metrics}")
+    print(f"Final Student Metrics: {metrics}")
 
 if __name__ == "__main__":
     main()
