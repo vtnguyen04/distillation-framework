@@ -85,5 +85,24 @@ def main(cfg: DistillationConfig):
 
     trainer.fit(epochs=cfg.train.epochs)
 
+    # 5. Evaluation
+    print("\nStarting Evaluation...")
+    testset = datasets.CIFAR10(root=cfg.data.data_root, train=False, download=True, transform=transform)
+    test_loader = DataLoaderFactory.create(
+        testset,
+        batch_size=cfg.data.batch_size,
+        num_workers=cfg.data.num_workers
+    )
+
+    from src.engine.evaluator import Evaluator
+    evaluator = Evaluator(
+        model=student_wrapper,
+        val_loader=test_loader,
+        config=cfg
+    )
+
+    metrics = evaluator.evaluate()
+    print(f"Final Test Metrics: {metrics}")
+
 if __name__ == "__main__":
     main()
