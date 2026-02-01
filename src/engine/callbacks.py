@@ -13,74 +13,96 @@ class Callback:
     def on_epoch_end(self, trainer, epoch: int, metrics: Dict[str, float]): pass
     def on_train_end(self, trainer): pass
 
+class CSVLogger(Callback):
+    """
+    Logs metrics to a CSV file for plotting.
+    """
+    def __init__(self, save_dir: str):
+        self.save_dir = save_dir
+        self.csv_path = f"{save_dir}/results.csv"
+        self.file = None
+        self.keys = []
+
+    def on_epoch_end(self, trainer, epoch: int, metrics: Dict[str, float]):
+        if not trainer.accelerator.is_local_main_process:
+            return
+
+        # Initialize file headers on first write to capture all potential keys
+        combined_metrics = {"epoch": epoch, **metrics}
+
+        if self.file is None:
+            self.keys = list(combined_metrics.keys())
+            import csv
+            self.file = open(self.csv_path, "w", newline="")
+            self.writer = csv.DictWriter(self.file, fieldnames=self.keys)
+            self.writer.writeheader()
+
+        # Write
+        # align keys just in case
+        row = {k: combined_metrics.get(k, 0.0) for k in self.keys}
+        self.writer.writerow(row)
+        self.file.flush()
+
+    def on_train_end(self, trainer):
+        if self.file:
+            self.file.close()
+            # Auto-plot
+            from src.utils.plotting import plot_results
+            plot_results(self.csv_path, self.save_dir)
+
 class ModelCheckpoint(Callback):
     """
     Saves model checkpoints.
-    Supports:
-    - save_best_only: Save only if monitored metric improves.
-    - save_last: Always save the latest model.
-    - top_k: Keep only top K best models.
+    Strctly saves:
+    - checkpoints/best: The best model so far.
+    - checkpoints/last: The latest model.
     """
     def __init__(
         self,
         dirpath: str,
         monitor: str = "val_loss",
         mode: str = "min",
-        save_best_only: bool = True,
-        save_last: bool = True,
-        top_k: int = 1
+        save_best_only: bool = True, # Ignored, always strict in this refined version
+        save_last: bool = True, # Ignored, always strict
+        top_k: int = 1 # Ignored
     ):
         self.dirpath = dirpath
         self.monitor = monitor
         self.mode = mode
-        self.save_best_only = save_best_only
-        self.save_last = save_last
-        self.top_k = top_k
 
         self.best_score = np.inf if mode == "min" else -np.inf
-        self.best_k_models = {} # path -> score
 
     def on_epoch_end(self, trainer, epoch: int, metrics: Dict[str, float]):
-        full_path = f"{self.dirpath}/epoch_{epoch}"
         current_score = metrics.get(self.monitor)
 
+        # Fallback
         if current_score is None:
-            if self.monitor != "loss" and self.monitor != "train_loss": # Fallback handling
-                 logger.warning(f"Metric {self.monitor} not found in metrics. Available: {metrics.keys()}")
+            if "train_loss" in metrics:
+                 current_score = metrics["train_loss"]
+            else:
                  return
-            # Allow fallback to train loss if val not present
-            current_score = metrics.get("train_loss")
 
-        # Logic to check if best
+        # Check Best
         is_best = False
         if self.mode == "min":
             is_best = current_score < self.best_score
         else:
             is_best = current_score > self.best_score
 
-        # Save Best
-        if self.save_best_only:
-            if is_best:
-                self.best_score = current_score
-                logger.info(f"⭐️ New best model found! Score: {current_score:.4f}")
-                self._save(trainer, full_path, is_best=True)
-        else:
-            # If not best only, just save every epoch (or interval determined by trainer loop)
-            # But normally Checkpoint callback handles saving.
-            self._save(trainer, full_path)
+        if is_best:
+            self.best_score = current_score
+            logger.info(f"⭐️ New best model found! Score: {current_score:.4f}")
+            self._save(trainer, "best")
 
-        # Save Last
-        if self.save_last:
-            last_path = f"{self.dirpath}/last"
-            self._save(trainer, last_path)
+        # Always save Last
+        self._save(trainer, "last")
 
-    def _save(self, trainer, path: str, is_best: bool = False):
+    def _save(self, trainer, name: str):
         if trainer.accelerator.is_local_main_process:
+            path = f"{self.dirpath}/{name}"
+            # Accelerate's save_state overwrites/merges.
+            # Ideally we want to clean it first to ensure no stale files, but save_state handles it mostly okay.
             trainer.accelerator.save_state(path)
-            if is_best:
-                 # Clean up top_k if needed.
-                 # For simplicity in this MVF (Minimum Viable Framework), we just save.
-                 pass
 
 class EarlyStopping(Callback):
     """

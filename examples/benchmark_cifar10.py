@@ -167,5 +167,30 @@ def main(cfg: DistillationConfig):
     metrics = evaluator.evaluate()
     print(f"Final Student Metrics: {metrics}")
 
+    # 6. Inference Preview (Ultralytics Style)
+    print("\nGenerating Inference Preview...")
+    from src.utils.plotting import plot_images
+
+    # Get a batch
+    data_iter = iter(test_loader)
+    images, targets = next(data_iter)
+
+    # Predict
+    device = trainer.device
+    student.eval()
+    with torch.no_grad():
+        outputs = student(images.to(device))
+        preds = outputs.argmax(dim=1)
+
+    # Plot
+    # CIFAR-10 Classes
+    classes = ['plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+    save_path = f"{trainer.output_dir}/val_batch0.jpg"
+    plot_images(images, targets, preds.cpu(), classes, save_path)
+
+    # Ensure Result Plots are up to date
+    from src.utils.plotting import plot_results
+    plot_results(f"{trainer.output_dir}/results.csv", trainer.output_dir)
+
 if __name__ == "__main__":
     main()

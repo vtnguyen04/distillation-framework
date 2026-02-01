@@ -21,6 +21,8 @@ dependencies = [
     "rich",  # For pretty logging
     "torchvision",
     "tensorboard",
+    "matplotlib>=3.9.4",
+    "pandas>=2.3.3",
 ]
 
 [project.optional-dependencies]

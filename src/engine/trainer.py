@@ -29,7 +29,7 @@ class Trainer:
     ):
         import datetime
         import os
-        from src.engine.callbacks import ModelCheckpoint, EarlyStopping
+        from src.engine.callbacks import ModelCheckpoint, EarlyStopping, CSVLogger
 
         # Setup Experiment Directory
         self.config = config or {}
@@ -64,15 +64,16 @@ class Trainer:
         self.callbacks = []
         self.should_stop = False
 
+        # CSV Logger (Always enabled for Ultralytics style)
+        self.callbacks.append(CSVLogger(save_dir=self.output_dir))
+
         # Parse Config and Init Callbacks
         if hasattr(config, "checkpoint") and config.checkpoint.enabled:
             ckpt = config.checkpoint
             self.callbacks.append(ModelCheckpoint(
                 dirpath=self.checkpoint_dir,
                 monitor=ckpt.monitor,
-                mode=ckpt.mode,
-                save_best_only=ckpt.save_best_only,
-                save_last=ckpt.save_last
+                mode=ckpt.mode
             ))
 
         if hasattr(config, "early_stopping") and config.early_stopping.enabled:
@@ -147,6 +148,10 @@ class Trainer:
             if self.should_stop:
                 logger.info("Training stopped due to Early Stopping.")
                 break
+
+        # Run Traing End Callbacks (e.g. Plots)
+        for callback in self.callbacks:
+            callback.on_train_end(self)
 
         self.tracker.finish()
 
