@@ -29,6 +29,7 @@ class Trainer:
     ):
         import datetime
         import os
+        from src.engine.callbacks import ModelCheckpoint, EarlyStopping
 
         # Setup Experiment Directory
         self.config = config or {}
@@ -41,7 +42,7 @@ class Trainer:
         self.output_dir = f"experiments/{exp_name}/{timestamp}"
         self.checkpoint_dir = f"{self.output_dir}/checkpoints"
         os.makedirs(self.output_dir, exist_ok=True)
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        # Checkpoint dir created by callback if needed
 
         # Initialize Accelerator with specific project dir
         self.accelerator = Accelerator(log_with="tensorboard", project_dir=self.output_dir)
@@ -58,6 +59,29 @@ class Trainer:
 
         # MLOps Tracker
         self.tracker = MLTracker(self.accelerator, project_name=project_name)
+
+        # Callbacks
+        self.callbacks = []
+        self.should_stop = False
+
+        # Parse Config and Init Callbacks
+        if hasattr(config, "checkpoint") and config.checkpoint.enabled:
+            ckpt = config.checkpoint
+            self.callbacks.append(ModelCheckpoint(
+                dirpath=self.checkpoint_dir,
+                monitor=ckpt.monitor,
+                mode=ckpt.mode,
+                save_best_only=ckpt.save_best_only,
+                save_last=ckpt.save_last
+            ))
+
+        if hasattr(config, "early_stopping") and config.early_stopping.enabled:
+            es = config.early_stopping
+            self.callbacks.append(EarlyStopping(
+                monitor=es.monitor,
+                patience=es.patience,
+                min_delta=es.min_delta
+            ))
 
     def train_epoch(self, epoch: int):
         self.student.train()
@@ -109,18 +133,23 @@ class Trainer:
         for epoch in range(1, epochs + 1):
             avg_loss = self.train_epoch(epoch)
 
+            # Simplified metrics dict
+            metrics = {"train_loss": avg_loss}
+
             if self.val_loader:
-                 # Simplified evaluation hook
+                 # In a real scenario, run Eval here and update metrics
                  pass
 
-            if self.accelerator.is_local_main_process:
-                # Save to structured dir
-                save_path = f"{self.checkpoint_dir}/epoch_{epoch}"
-                self.accelerator.save_state(save_path)
+            # Run Callbacks
+            for callback in self.callbacks:
+                callback.on_epoch_end(self, epoch, metrics)
+
+            if self.should_stop:
+                logger.info("Training stopped due to Early Stopping.")
+                break
 
         self.tracker.finish()
 
     def save_model(self, path: str):
         self.accelerator.wait_for_everyone()
         unwrapped_model = self.accelerator.unwrap_model(self.student)
-        self.accelerator.save(unwrapped_model.state_dict(), path)

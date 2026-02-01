@@ -35,12 +35,29 @@ class TrainConfig:
     log_interval: int = 10
 
 @dataclass
+class CheckpointConfig:
+    enabled: bool = True
+    monitor: str = "train_loss" # Defaulting to train_loss for demo since we have no val loader in benchmark
+    mode: str = "min"
+    save_best_only: bool = True
+    save_last: bool = True
+
+@dataclass
+class EarlyStoppingConfig:
+    enabled: bool = True
+    monitor: str = "train_loss"
+    patience: int = 5
+    min_delta: float = 0.001
+
+@dataclass
 class DistillationConfig:
     experiment_name: str = "cifar10_benchmark"
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     loss: LossConfig = field(default_factory=LossConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
+    checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
+    early_stopping: EarlyStoppingConfig = field(default_factory=EarlyStoppingConfig)
 
 # Register configs
 cs = ConfigStore.instance()
